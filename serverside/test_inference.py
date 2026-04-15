@@ -3,15 +3,20 @@ import os
 
 API_URL = "http://localhost:5000/api/detect"
 TEST_IMAGES = [
-    "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/realistic_bottle_for_yolo_1776260151158.png",
-    "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/test_banana_organic_1776260497471.png",
-    "/home/tigo/Desktop/Myprojects/INTEGRALL/IOT-Smart-Waste-Sorting/serverside/uploads/ima"
+    {"name": "Bottle", "path": "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/realistic_bottle_for_yolo_1776260151158.png"},
+    {"name": "Banana", "path": "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/test_banana_organic_1776260497471.png"},
+    {"name": "Paper", "path": "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/test_paper_sample_1776263392643.png"},
+    {"name": "Nylon", "path": "/home/tigo/.gemini/antigravity/brain/680bff4e-6e2f-443a-aa0e-63cb6ebc4097/test_nylon_sample_1776263438574.png"}
 ]
 
 def test_inference():
-    for img_path in TEST_IMAGES:
+    print(f"{'Sample':<10} | {'Category':<10} | {'Conf':<6} | {'Object'}")
+    print("-" * 50)
+    
+    for item in TEST_IMAGES:
+        img_path = item["path"]
         if not os.path.exists(img_path):
-            print(f"Error: Image not found at {img_path}")
+            print(f"Error: {item['name']} image not found")
             continue
 
         with open(img_path, 'rb') as f:
@@ -19,15 +24,13 @@ def test_inference():
             data = {'device_id': 'dev-001'}
             
             try:
-                print(f"\nTesting image: {os.path.basename(img_path)}")
                 response = requests.post(API_URL, files=files, data=data)
                 
                 if response.status_code == 200:
-                    print("Success!")
-                    print("Result:", response.json())
+                    res = response.json()
+                    print(f"{item['name']:<10} | {res['category']:<10} | {res['confidence']:<6.2f} | {res['object']}")
                 else:
                     print(f"Failed: {response.status_code}")
-                    print(response.text)
             except Exception as e:
                 print(f"Connection Error: {e}")
 

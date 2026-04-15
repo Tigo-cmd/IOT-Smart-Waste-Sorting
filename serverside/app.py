@@ -1,11 +1,15 @@
 import os
 import uuid
-import cv2
-import numpy as np
+import base64
+import json
+import re
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from datetime import datetime
-from ultralytics import YOLO
+from groq import Groq
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -16,9 +20,11 @@ UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Load YOLOv8 Model (Small) - Better accuracy than Nano for waste detection
-print("Loading YOLOv8s model...")
-model = YOLO("yolov8s.pt") 
+# Initialize Groq Client
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    print("WARNING: GROQ_API_KEY not found in environment. Zero-shot vision will fail.")
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # In-memory storage
 db = {
@@ -38,32 +44,61 @@ db = {
     "alerts": []
 }
 
-def map_to_category(obj_name):
-    """Maps COCO classes to our 3 waste categories"""
-    # Plastic: Containers and synthetic materials
-    plastic = ["bottle", "cup", "wine glass", "vase", "frisbee"]
-    
-    # Metal: Cans and utensils 
-    metal = ["can", "fork", "knife", "spoon", "scissors", "cell phone"]
-    
-    # Organic: Food items and biological waste
-    organic = [
-        "banana", "apple", "sandwich", "orange", "broccoli", 
-        "carrot", "hot dog", "pizza", "donut", "cake", 
-        "potted plant", "bowl" # Note: Bowls are often misidentified food samples in MVP
-    ]
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
-    # Normalize name
-    obj_name = obj_name.lower().strip()
-
-    if obj_name in plastic:
-        return "plastic"
-    elif obj_name in metal:
-        return "metal"
-    elif obj_name in organic:
-        return "organic"
-    else:
-        return "unknown"
+def analyze_vision_with_groq(image_path):
+    """
+    Uses Groq's Vision model (Llama 3.2 11b Vision) to classify waste.
+    This provides high accuracy for 'paper', 'nylon', etc. without training.
+    """
+    try:
+        base64_image = encode_image(image_path)
+        
+        # We ask the model to return a structured JSON response
+        completion = groq_client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text", 
+                            "text": (
+                                "Identify the main object in this image and its material. "
+                                "Classify it into EXACTLY ONE of these categories: "
+                                "'plastic', 'metal', 'organic', 'paper', 'nylon', or 'unknown'.\n"
+                                "Return ONLY a valid JSON object with these fields:\n"
+                                "- 'object': (string, e.g., 'crushed water bottle')\n"
+                                "- 'category': (string, one of the categories above)\n"
+                                "- 'confidence': (float, 0.0 to 1.0)\n"
+                                "Do not include markdown or explanations."
+                            )
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            temperature=0, # Deterministic for classification
+            max_tokens=512
+        )
+        
+        content = completion.choices[0].message.content.strip()
+        # Clean up JSON if model returns markdown blocks
+        if content.startswith('```'):
+            content = re.sub(r'```(?:json)?\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL)
+            
+        print(f"Groq API Response: {content}")
+        return json.loads(content)
+    except Exception as e:
+        print(f"Groq Vision Error: {e}")
+        return {"object": "error", "category": "unknown", "confidence": 0.0}
 
 @app.route('/api/detect', methods=['POST'])
 def detect_waste():
@@ -74,44 +109,18 @@ def detect_waste():
     image_file = request.files['image']
     device_id = request.form.get('device_id', 'dev-001')
     
-    # Preserve original extension
-    ext = os.path.splitext(image_file.filename)[1] if image_file.filename else '.jpg'
-    if not ext: ext = '.jpg'
-    
     # Save file
+    ext = os.path.splitext(image_file.filename)[1] if image_file.filename else '.jpg'
     filename = f"{uuid.uuid4()}{ext}"
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     image_file.save(filepath)
 
-    # Run Inference
-    results = model(filepath)
+    # Use Zero-Shot Vision API for high accuracy
+    analysis = analyze_vision_with_groq(filepath)
     
-    # Process results
-    found_objects = []
-    for r in results:
-        for box in r.boxes:
-            class_id = int(box.cls[0])
-            class_name = model.names[class_id]
-            confidence = float(box.conf[0])
-            
-            # Use a slightly lower threshold for MVP testing
-            if confidence > 0.15: # Very low to see everything in logs
-                print(f"YOLO Found: {class_name} ({confidence:.2f})")
-                found_objects.append({
-                    "object": class_name,
-                    "confidence": confidence
-                })
-
-    # Pick the best detection
-    if found_objects:
-        best = max(found_objects, key=lambda x: x['confidence'])
-        category = map_to_category(best['object'])
-        final_confidence = best['confidence']
-        detected_object = best['object']
-    else:
-        category = "unknown"
-        final_confidence = 0.0
-        detected_object = "none"
+    category = analysis.get('category', 'unknown').lower()
+    final_confidence = float(analysis.get('confidence', 0.0))
+    detected_object = analysis.get('object', 'unknown')
 
     # Save to history for Dashboard
     new_detection = {
@@ -119,15 +128,15 @@ def detect_waste():
         "device_id": device_id,
         "waste_class": category,
         "confidence": final_confidence,
-        "image_url": f"http://localhost:5000/uploads/{filename}",
+        "image_url": f"{request.host_url}uploads/{filename}",
         "timestamp": datetime.now().isoformat(),
-        "notes": f"Detected: {detected_object}",
+        "notes": f"AI identified: {detected_object}",
         "devices": {
             "name": "Smart Bin Alpha",
             "location": "Main Entrance"
         }
     }
-    db["detections"].insert(0, new_detection) # Add to start
+    db["detections"].insert(0, new_detection)
 
     # Auto-generate alert if needed
     if final_confidence < 0.6 or category == "unknown":
@@ -143,7 +152,6 @@ def detect_waste():
             "devices": {"name": "Smart Bin Alpha"}
         })
 
-    # Response for ESP32-CAM
     return jsonify({
         "category": category,
         "confidence": final_confidence,
@@ -162,7 +170,7 @@ def get_detections():
     if category and category != 'all':
         results = [d for d in results if d['waste_class'] == category]
         
-    return jsonify(results[:100]) # Limit to 100
+    return jsonify(results[:100])
 
 @app.route('/api/devices', methods=['GET'])
 def get_devices():
@@ -187,7 +195,12 @@ def uploaded_file(filename):
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({"status": "online", "model": "YOLOv8n", "time": datetime.now().isoformat()})
+    return jsonify({
+        "status": "online", 
+        "engine": "Groq-Vision", 
+        "api_connected": GROQ_API_KEY is not None,
+        "time": datetime.now().isoformat()
+    })
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
