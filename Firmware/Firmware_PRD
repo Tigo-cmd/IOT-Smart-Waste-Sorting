@@ -1,0 +1,320 @@
+PRD: Smart IoT Waste Sorting Bin
+Product overview
+
+A smart waste bin that detects a person approaching with an ultrasonic sensor, captures waste using an ESP32-CAM, sends the image/video to a backend AI model for detection and classification, and displays the result on a frontend dashboard. The system classifies waste into three categories: plastic, metal, and organic.
+
+1) Firmware PRD
+Product name
+
+ESP32-CAM Waste Detection Firmware
+
+Purpose
+
+Control the bin hardware, detect user presence, capture waste imagery, send data to the backend, and trigger the sorting mechanism based on the backend response.
+
+Goals
+Detect human presence using the ultrasonic sensor.
+Open the bin lid when presence is confirmed.
+Capture image or short video of the waste.
+Send captured media to the backend reliably.
+Receive classification response from backend.
+Control three servos to sort waste into the correct category.
+Reset the bin to idle after each cycle.
+Users
+End users disposing waste.
+System operator or maintainer.
+Scope
+In scope
+Ultrasonic sensor reading
+Servo control
+ESP32-CAM image capture
+Wi-Fi connection management
+Backend communication
+State machine for bin operation
+Error handling and retry logic
+Out of scope
+AI model training
+Frontend dashboard design
+Database management
+Cloud deployment orchestration
+Functional requirements
+The firmware shall monitor the ultrasonic sensor continuously.
+When a person is detected within a configured threshold, the firmware shall enter an active sorting state.
+The firmware shall open the lid using Servo 1.
+The firmware shall capture waste imagery using ESP32-CAM.
+The firmware shall send the captured image or stream snapshot to the backend through HTTP or MQTT.
+The firmware shall wait for a classification result from the backend.
+The firmware shall move Servo 2 to the appropriate tray position based on the classification.
+The firmware shall activate Servo 3 to release waste into the selected compartment.
+The firmware shall return all servos to the default position after sorting.
+The firmware shall log basic status events for debugging.
+Non-functional requirements
+Low latency response after presence detection.
+Stable Wi-Fi reconnection after signal loss.
+Reliable servo timing and movement.
+Minimal false triggering from ultrasonic noise.
+Power-efficient idle mode.
+State machine
+Idle
+Presence detected
+Lid open
+Capture waste
+Send to backend
+Wait for classification
+Sort waste
+Reset
+Error recovery
+Hardware interfaces
+Ultrasonic sensor input
+Servo 1 output
+Servo 2 output
+Servo 3 output
+ESP32-CAM image capture
+Wi-Fi communication
+Data sent to backend
+Device ID
+Timestamp
+Captured image or frame
+Optional confidence metadata
+Optional sensor readings
+Error handling
+If Wi-Fi fails, retry connection.
+If backend times out, retry capture or mark as unresolved.
+If servo movement fails, stop the cycle and raise an error state.
+If ultrasonic gives unstable readings, require repeated detection before activation.
+Acceptance criteria
+The bin detects presence correctly within the configured distance range.
+The lid opens and closes without manual intervention.
+Captured images are sent successfully to the backend.
+The correct servo sequence runs after backend classification.
+The bin returns to idle after sorting.
+The firmware recovers from temporary Wi-Fi failures.
+
+
+use integrall library to implement this project
+
+here is the configuration of the hardware it is 
+a test to ensure the hardware is working as expected and also it was done with the ESP32 DEV MODULE but the actual hardware is ESP32CAM so i need to change the pins
+/*
+1. int currentAngle = 90;      // assume startup position = 90° for cap serv0 end position = 5
+
+2. int currentAngle = 40;      // assume startup position = 40° for door serv0 end position is 160
+
+3. int currentAngle = ; 103     // assume startup position = 103° for collector. serv0 end position are two here ... 0 and 160
+
+
+ESP32CAM Sensor
+purple = echo
+yellow = trigger
+blue = collector
+green = cap
+orange = door
+
+for the ultrasonic sensor it is connected to IO2 (trigger) and IO14 (echo)
+
+
+*/
+
+/*THIS PARTICULAR TEST CODE IS WITH ESP32 DEV MODULE*/
+#include <ESP32Servo.h>
+
+// ===================== SERVO OBJECTS =====================
+Servo capServo;
+Servo doorServo;
+Servo collectorServo;
+
+// ===================== PINS =====================
+// Change these to your actual servo signal pins
+#define CAP_SERVO_PIN        IO15
+#define DOOR_SERVO_PIN       IO13
+#define COLLECTOR_SERVO_PIN  IO12
+
+// ===================== SPEED =====================
+const int stepDelay = 30;   // all movement must be slow
+
+// ===================== STARTUP POSITIONS =====================
+int capCurrentAngle = 90;         // cap servo startup position
+int doorCurrentAngle = 40;        // door servo startup position
+int collectorCurrentAngle = 103;  // collector servo startup position
+
+// ===================== LIMITS =====================
+const int capMinAngle = 5;
+const int capMaxAngle = 90;
+
+const int doorMinAngle = 40;
+const int doorMaxAngle = 160;
+
+// collector only allows 0, 103, 180
+
+String inputLine = "";
+
+// ===================== SLOW MOVE FUNCTION =====================
+void slowMoveServo(Servo &servo, int &currentAngle, int targetAngle) {
+  if (currentAngle < targetAngle) {
+    for (int angle = currentAngle; angle <= targetAngle; angle++) {
+      servo.write(angle);
+      delay(stepDelay);
+    }
+  } else if (currentAngle > targetAngle) {
+    for (int angle = currentAngle; angle >= targetAngle; angle--) {
+      servo.write(angle);
+      delay(stepDelay);
+    }
+  }
+
+  currentAngle = targetAngle;
+}
+
+// ===================== HELP =====================
+void printHelp() {
+  Serial.println();
+  Serial.println("=== 3-Servo Manual Test Commands ===");
+  Serial.println("cap <angle>        -> cap servo moves between 5 and 90");
+  Serial.println("door <angle>       -> door servo moves between 40 and 160");
+  Serial.println("collector <angle>  -> collector servo only accepts 0, 103, or 180");
+  Serial.println("status             -> show current tracked positions");
+  Serial.println("help               -> show this help");
+  Serial.println();
+  Serial.println("Examples:");
+  Serial.println("cap 20");
+  Serial.println("door 120");
+  Serial.println("collector 0");
+  Serial.println("collector 103");
+  Serial.println("collector 180");
+  Serial.println();
+}
+
+// ===================== STATUS =====================
+void printStatus() {
+  Serial.println();
+  Serial.println("Current servo positions:");
+  Serial.print("Cap: ");
+  Serial.println(capCurrentAngle);
+
+  Serial.print("Door: ");
+  Serial.println(doorCurrentAngle);
+
+  Serial.print("Collector: ");
+  Serial.println(collectorCurrentAngle);
+  Serial.println();
+}
+
+// ===================== PROCESS COMMAND =====================
+void processCommand(String cmd) {
+  cmd.trim();
+  cmd.toLowerCase();
+
+  if (cmd.length() == 0) return;
+
+  if (cmd == "help") {
+    printHelp();
+    return;
+  }
+
+  if (cmd == "status") {
+    printStatus();
+    return;
+  }
+
+  int spaceIndex = cmd.indexOf(' ');
+  if (spaceIndex == -1) {
+    Serial.println("Invalid command. Use: c 20, d 120, t 103");
+    return;
+  }
+
+  String servoName = cmd.substring(0, spaceIndex);
+  String angleText = cmd.substring(spaceIndex + 1);
+  angleText.trim();
+
+  int targetAngle = angleText.toInt();
+
+  // CAP SERVO
+  if (servoName == "c") {
+    if (targetAngle < capMinAngle || targetAngle > capMaxAngle) {
+      Serial.print("Cap servo angle must be between ");
+      Serial.print(capMinAngle);
+      Serial.print(" and ");
+      Serial.println(capMaxAngle);
+      return;
+    }
+
+    Serial.print("Moving CAP servo to ");
+    Serial.println(targetAngle);
+    slowMoveServo(capServo, capCurrentAngle, targetAngle);
+    Serial.println("CAP servo done.");
+    return;
+  }
+
+  // DOOR SERVO
+  if (servoName == "d") {
+    if (targetAngle < doorMinAngle || targetAngle > doorMaxAngle) {
+      Serial.print("Door servo angle must be between ");
+      Serial.print(doorMinAngle);
+      Serial.print(" and ");
+      Serial.println(doorMaxAngle);
+      return;
+    }
+
+    Serial.print("Moving DOOR servo to ");
+    Serial.println(targetAngle);
+    slowMoveServo(doorServo, doorCurrentAngle, targetAngle);
+    Serial.println("DOOR servo done.");
+    return;
+  }
+
+  // COLLECTOR SERVO
+  if (servoName == "t") {
+    if (!(targetAngle == 0 || targetAngle == 103 || targetAngle == 180)) {
+      Serial.println("Collector servo only accepts: 0, 103, or 180");
+      return;
+    }
+
+    Serial.print("Moving COLLECTOR servo to ");
+    Serial.println(targetAngle);
+    slowMoveServo(collectorServo, collectorCurrentAngle, targetAngle);
+    Serial.println("COLLECTOR servo done.");
+    return;
+  }
+
+  Serial.println("Unknown servo name. Use: cap, door, or collector");
+}
+
+// ===================== SETUP =====================
+void setup() {
+  Serial.begin(115200);
+
+  capServo.setPeriodHertz(50);
+  doorServo.setPeriodHertz(50);
+  collectorServo.setPeriodHertz(50);
+
+  capServo.attach(CAP_SERVO_PIN, 500, 2400);
+  doorServo.attach(DOOR_SERVO_PIN, 500, 2400);
+  collectorServo.attach(COLLECTOR_SERVO_PIN, 500, 2400);
+
+  // We assume the servos are already placed at these startup positions.
+  // So we write them once as the tracked initial positions.
+  capServo.write(capCurrentAngle);
+  doorServo.write(doorCurrentAngle);
+  collectorServo.write(collectorCurrentAngle);
+
+  Serial.println();
+  Serial.println("3-Servo Test Ready.");
+  printHelp();
+  printStatus();
+}
+
+// ===================== LOOP =====================
+void loop() {
+  while (Serial.available()) {
+    char c = Serial.read();
+
+    if (c == '\n' || c == '\r') {
+      if (inputLine.length() > 0) {
+        processCommand(inputLine);
+        inputLine = "";
+      }
+    } else {
+      inputLine += c;
+    }
+  }
+}

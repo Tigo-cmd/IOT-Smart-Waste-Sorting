@@ -1,0 +1,95 @@
+(2)Backend PRD
+Product name
+
+Waste Classification Backend Service
+
+Purpose
+
+Receive images from the ESP32-CAM, run AI-based waste classification, return the predicted category, and store detection results for dashboard visualization and analytics.
+
+Goals
+Accept image/video requests from the firmware.
+Run object detection and classification.
+Identify waste as plastic, metal, or organic.
+Return the classification response quickly.
+Store results for history and analytics.
+Provide API endpoints for the frontend dashboard.
+Users
+Firmware device
+Web dashboard
+System administrator
+AI model developer
+Scope
+In scope
+API development
+AI inference pipeline
+Result storage
+Device authentication
+Dashboard data endpoints
+Logging and monitoring
+Out of scope
+Servo hardware control
+Physical sensor reading
+Frontend UI rendering
+Dataset collection tooling beyond storage hooks
+Functional requirements
+The backend shall expose an endpoint for receiving waste images or frames.
+The backend shall preprocess incoming media before inference.
+The backend shall run the waste detection model.
+The backend shall classify each item into plastic, metal, or organic.
+The backend shall return a prediction response to the device.
+The backend shall store each detection event with timestamp, category, confidence, and image reference.
+The backend shall expose endpoints for dashboard statistics.
+The backend shall support device authentication or API keys.
+The backend shall log inference failures and request errors.
+The backend shall support future retraining feedback storage.
+Non-functional requirements
+Low inference latency.
+Reliable API availability.
+Secure request handling.
+Scalable architecture for multiple bins.
+Easy model replacement and versioning.
+Proposed API endpoints
+Device endpoints
+POST /api/detect
+Input: image/frame, device ID
+Output: predicted class, confidence, optional bounding boxes
+GET /api/health
+Output: service status
+Frontend endpoints
+GET /api/detections
+GET /api/stats/daily
+GET /api/stats/category
+GET /api/bins/status
+Data model
+
+Each detection record should include:
+
+Detection ID
+Device ID
+Timestamp
+Predicted category
+Confidence score
+Bounding box data
+Image path or URL
+Processing time
+Status: success, failed, pending
+AI pipeline
+Receive image
+Validate request
+Preprocess image
+Run detection model
+Select top category
+Return prediction
+Save result
+Error handling
+Invalid image formats shall return a clear error.
+Low confidence predictions shall be flagged.
+Model failure shall return a safe fallback response.
+Database write failure shall be logged and retried.
+Acceptance criteria
+The backend accepts image uploads successfully.
+The backend returns a valid category for each request.
+Detection results are stored in the database.
+The dashboard can fetch live and historical results.
+The backend remains stable under repeated requests.

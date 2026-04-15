@@ -1,0 +1,96 @@
+3) Frontend PRD
+Product name
+
+Waste Sorting Dashboard
+
+Purpose
+
+Provide a visual interface for monitoring waste detection events, system status, statistics, and device activity in real time.
+
+Goals
+Show live video or picturs of waste as well as recent detection results.
+Display waste category and confidence.
+Visualize sorting activity over time.
+Show bin health and device status.
+Give an operator a clear view of system performance.
+Users
+System operator
+Research supervisor
+Demo audience
+Maintenance personnel
+Scope
+In scope
+Live detection feed
+Detection history table
+Category summary charts
+System status indicators
+Device connection status
+Error and alert display
+Out of scope
+Training the AI model
+Direct hardware control
+Firmware flashing
+Complex admin workflows
+Functional requirements
+The dashboard shall display the latest detection result.
+The dashboard shall show the waste class, confidence, and timestamp.
+The dashboard shall display a live or periodically refreshed event list.
+The dashboard shall show analytics such as total detections and category counts.
+The dashboard shall show device status, including online/offline state.
+The dashboard shall show error messages when backend or device issues occur.
+The dashboard shall allow filtering by date, device, or category.
+The dashboard shall support image preview for each detection.
+The dashboard shall show sorting activity in near real time.
+The dashboard shall be responsive on desktop and tablet screens.
+Non-functional requirements
+Fast page loading.
+Clean and simple UI.
+Responsive layout.
+Easy-to-read charts and tables.
+Real-time updates without manual refresh where possible.
+Main UI sections
+Header
+System name
+Device status
+Connection indicator
+Live panel
+Latest waste image
+Predicted class
+Confidence score
+Timestamp
+Analytics panel
+Total detections
+Plastic count
+Metal count
+Organic count
+History table
+Recent detections
+Filter controls
+View image action
+Alerts panel
+Backend downtime
+Device offline
+Low confidence detection
+Acceptance criteria
+The dashboard displays new detections automatically or on refresh.
+Users can see classification results clearly.
+Charts and tables update with backend data.
+The interface works well on common screen sizes.
+Errors and offline states are visible to the user.
+Recommended development order
+Firmware
+Build the sensor-to-camera-to-servo cycle first.
+Backend
+Add the model inference service and API response flow.
+Frontend
+Build the dashboard after backend endpoints are stable.
+MVP definition
+
+A working MVP should do only this:
+
+Detect presence with ultrasonic
+Capture waste image
+Send image to backend
+Classify into 3 categories
+Show result on dashboard
+Trigger the correct servo path
